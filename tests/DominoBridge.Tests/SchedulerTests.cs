@@ -16,6 +16,7 @@ public class SchedulerTests
         s.Printer.AckTimeoutMs = 400;
         s.Printer.ConnectTimeoutMs = 1000;
         s.Queue.ReconnectIntervalMs = 0;
+        s.Queue.AutoRefill = false; // manual mode unless a test opts in
         tweak?.Invoke(s);
         return s;
     }
@@ -222,6 +223,53 @@ public class SchedulerTests
         sch.Resume();
         await run;
         Assert.Equal(10, srv.FrameCount);
+    }
+
+    [Fact]
+    public async Task AutoRefill_waits_on_nak_and_resends_same_row_until_everything_is_accepted()
+    {
+        // Fake printer buffer: capacity 3, one item consumed every 40 ms. NAK while full.
+        var accepted = new List<DateTime>();
+        var lockObj = new object();
+        using var srv = new FakeEdcServer();
+        srv.Reply = _ =>
+        {
+            lock (lockObj)
+            {
+                accepted.RemoveAll(t => (DateTime.UtcNow - t).TotalMilliseconds > 40 * 3);
+                if (accepted.Count >= 3) return new byte[] { 0x15 };
+                accepted.Add(DateTime.UtcNow);
+                return new byte[] { 0x06 };
+            }
+        };
+        var s = Settings(srv, x => { x.Queue.AutoRefill = true; x.Queue.AutoRefillDelayMs = 100; });
+        var q = Rows(s, 10);
+        using var conn = new PrinterConnectionManager(s);
+        await conn.ConnectAsync();
+        var sch = new SendScheduler(q, conn, s);
+        await sch.RunAsync();
+
+        Assert.Equal(SchedulerState.Completed, sch.State);
+        Assert.All(q.Rows, r => Assert.Equal(RowStatus.Accepted, r.Status));
+        // accepted frames (ACKed ones) must be exactly P1..P10 in order, each once
+        // frames include NAKed duplicates; verify order is non-decreasing and every row appears
+        var names = srv.Frames.Select(Text).ToList();
+        Assert.True(names.Count > 10);
+        Assert.Equal(Enumerable.Range(1, 10).Select(i => $"P{i},S{i:000}"), names.Distinct());
+    }
+
+    [Fact]
+    public async Task AutoRefill_halts_when_nak_never_clears()
+    {
+        using var srv = new FakeEdcServer { Reply = _ => new byte[] { 0x15 } };
+        var s = Settings(srv, x => { x.Queue.AutoRefill = true; x.Queue.AutoRefillDelayMs = 100; x.Queue.AutoRefillMaxConsecutiveNaks = 3; });
+        var q = Rows(s, 2);
+        using var conn = new PrinterConnectionManager(s);
+        await conn.ConnectAsync();
+        var sch = new SendScheduler(q, conn, s);
+        await sch.RunAsync();
+        Assert.Equal(SchedulerState.Halted, sch.State);
+        Assert.Equal(RowStatus.Rejected, q.Rows[0].Status);
     }
 
     [Fact]

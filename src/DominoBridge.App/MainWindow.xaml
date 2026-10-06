@@ -72,7 +72,10 @@
                                 <TextBox Grid.Row="9" Grid.Column="1" Text="{Binding Settings.Queue.MaxQueueSize, UpdateSourceTrigger=LostFocus}"/>
                                 <TextBlock Grid.Row="10" Text="Reconnect interval (ms, 0=off)"/>
                                 <TextBox Grid.Row="10" Grid.Column="1" Text="{Binding Settings.Queue.ReconnectIntervalMs, UpdateSourceTrigger=LostFocus}"/>
-                                <CheckBox Grid.Row="11" Grid.Column="1" Content="Debug: log TX/RX as hex" Margin="0,4" IsChecked="{Binding Settings.DebugHex}"/>
+                                <StackPanel Grid.Row="11" Grid.Column="1">
+                                    <CheckBox Content="Debug: log TX/RX as hex" Margin="0,4" IsChecked="{Binding Settings.DebugHex}"/>
+                                    <CheckBox Content="Auto buffer refill (no manual clicks)" Margin="0,2" IsChecked="{Binding Settings.Queue.AutoRefill}"/>
+                                </StackPanel>
                             </Grid>
                         </Expander>
                     </StackPanel>
@@ -119,7 +122,7 @@
                             <Button Content="Resume" Command="{Binding ResumeCommand}"/>
                             <Button Content="Stop" Command="{Binding StopCommand}"/>
                         </WrapPanel>
-                        <Button Content="Printer buffer empty (reset counter)" Command="{Binding BufferDrainedCommand}" Margin="0,8,0,0" HorizontalAlignment="Left"
+                        <Button Content="Printer buffer empty (manual mode only)" Command="{Binding BufferDrainedCommand}" Margin="0,8,0,0" HorizontalAlignment="Left"
                                 ToolTip="Confirm that the printer has consumed everything sent so far, so the next batch can be sent."/>
                         <TextBlock Margin="0,8,0,2" FontWeight="SemiBold" Text="Selected row decision"/>
                         <WrapPanel>

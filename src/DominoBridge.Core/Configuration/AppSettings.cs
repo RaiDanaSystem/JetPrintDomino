@@ -31,6 +31,14 @@ public sealed class QueueSettings
     /// <summary>Automatic retries, only ever applied when the row is known NOT to have been sent.</summary>
     public int MaxRetry { get; set; } = 0;
     public int ReconnectIntervalMs { get; set; } = 5000;
+    /// <summary>
+    /// Keep feeding the printer buffer without operator clicks. A NAK is treated as "buffer full / not accepted"
+    /// (the row was NOT taken, so re-sending it is duplicate-safe) and the same row is retried after AutoRefillDelayMs.
+    /// </summary>
+    public bool AutoRefill { get; set; } = true;
+    public int AutoRefillDelayMs { get; set; } = 1000;
+    /// <summary>Consecutive NAKs for the same row after which sending halts (guards against a real data error).</summary>
+    public int AutoRefillMaxConsecutiveNaks { get; set; } = 600;
 }
 
 public sealed class MappingEntry
@@ -43,6 +51,8 @@ public sealed class MappingEntry
 public sealed class ExcelSettings
 {
     public string LastFile { get; set; } = "";
+    /// <summary>Headers the saved mapping belongs to; the mapping is only reused if they are unchanged.</summary>
+    public List<string> Headers { get; set; } = new();
     public List<MappingEntry> Mapping { get; set; } = new();
 }
 

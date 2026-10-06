@@ -16,7 +16,11 @@ public partial class MainWindow : Window
         DataContext = _vm;
         _vm.LogLines.CollectionChanged += (_, _) =>
         {
-            if (LogList.Items.Count > 0) LogList.ScrollIntoView(LogList.Items[^1]);
+            // Scroll only after WPF has finished processing the change (doing it inside the event corrupts the ListBox).
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (LogList.Items.Count > 0) LogList.ScrollIntoView(LogList.Items[LogList.Items.Count - 1]);
+            }), System.Windows.Threading.DispatcherPriority.Background);
         };
     }
 

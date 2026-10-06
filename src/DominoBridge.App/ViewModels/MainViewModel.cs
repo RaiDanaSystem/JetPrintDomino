@@ -27,6 +27,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private SendScheduler? _scheduler;
     private List<(string Header, int Edc)> _lastMapping = new();
     private CancellationTokenSource? _cts;
+    private int _saveTick;
+    private string _lastSavedJson = "";
 
     private string _excelPath = "";
     private string _excelInfo = "No file loaded";
@@ -69,12 +71,36 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SkipCommand = new RelayCommand(SkipSelected, () => !_running && _selectedRow is { Status: RowStatus.Rejected or RowStatus.Failed or RowStatus.Unknown or RowStatus.Pending });
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        _timer.Tick += (_, _) => RefreshStatus();
+        _timer.Tick += (_, _) => { RefreshStatus(); if (++_saveTick % 20 == 0) SaveSettingsIfChanged(); };
         _timer.Start();
 
         _excelPath = Settings.Excel.LastFile;
         RefreshStatus();
         _logger.Info("Application started");
+    }
+
+    private void CaptureMapping()
+    {
+        if (_table == null || MappingRows.Count != _table.Headers.Length) return;
+        Settings.Excel.Headers = _table.Headers.ToList();
+        Settings.Excel.Mapping = MappingRows.Select(m => new MappingEntry
+        {
+            Header = m.Header,
+            EdcIndex = int.TryParse(m.EdcIndexText.Trim(), out var i) ? i : null
+        }).ToList();
+    }
+
+    private void SaveSettingsIfChanged()
+    {
+        try
+        {
+            CaptureMapping();
+            var json = System.Text.Json.JsonSerializer.Serialize(Settings);
+            if (json == _lastSavedJson) return;
+            SettingsStore.Save(Settings);
+            _lastSavedJson = json;
+        }
+        catch { /* never disturb operation because of settings I/O */ }
     }
 
     private void Post(Action a)
@@ -125,6 +151,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private async Task ConnectAsync()
     {
+        SaveSettingsIfChanged();
         if (!await _conn.ConnectAsync())
             _dialogs.Error("Connection Failed: " + _conn.LastError);
         RefreshStatus();
@@ -132,6 +159,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private async Task TestConnectionAsync()
     {
+        SaveSettingsIfChanged();
         var (ok, msg) = await _conn.TestConnectionAsync();
         if (ok) _dialogs.Info("Test Connection", msg + "\n\nNothing was sent to the printer.");
         else _dialogs.Error(msg);
@@ -184,16 +212,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Settings.Excel.LastFile = path;
 
         MappingRows.Clear();
+        // Reuse the saved mapping only if the column headers are exactly the same; otherwise map in order.
+        bool sameColumns = Settings.Excel.Headers.SequenceEqual(_table.Headers) && Settings.Excel.Mapping.Count == _table.Headers.Length;
         for (int i = 0; i < _table.Headers.Length; i++)
         {
-            var saved = Settings.Excel.Mapping.FirstOrDefault(m => m.Header == _table.Headers[i]);
             var sample = _table.Rows.Count > 0 ? _table.Rows[0].Cells[i] : "";
             var vm = new MappingRowVM(i, _table.Headers[i], sample);
-            // First load: map columns in order. Later loads: reuse the saved mapping for matching headers.
-            vm.EdcIndexText = Settings.Excel.Mapping.Count == 0 ? i.ToString()
-                : saved?.EdcIndex?.ToString() ?? "";
+            vm.EdcIndexText = sameColumns ? Settings.Excel.Mapping[i].EdcIndex?.ToString() ?? "" : i.ToString();
             MappingRows.Add(vm);
         }
+        if (sameColumns) _logger.Info("Saved column mapping restored");
+        Settings.Excel.Headers = _table.Headers.ToList();
+        CaptureMapping();
         _queue = null; _scheduler = null;
         Rows = Array.Empty<PrintRow>();
         SelectedRow = null;
@@ -227,11 +257,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (err != null) { _dialogs.Error(err.Message); return; }
 
         _lastMapping = mapping.OrderBy(m => m.EdcIndex).Select(m => (_table.Headers[m.ColumnIndex], m.EdcIndex)).ToList();
-        Settings.Excel.Mapping = MappingRows.Select(m => new MappingEntry
-        {
-            Header = m.Header,
-            EdcIndex = int.TryParse(m.EdcIndexText.Trim(), out var i) ? i : null
-        }).ToList();
+        CaptureMapping();
+        SaveSettingsIfChanged();
 
         _queue = PrintQueue.FromExcel(_table, mapping, protocol);
         _scheduler = new SendScheduler(_queue, _conn, Settings, _logger);
@@ -277,6 +304,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (!await _conn.ConnectAsync()) { _dialogs.Error("Connection Failed: " + _conn.LastError); RefreshStatus(); return; }
         }
+        SaveSettingsIfChanged();
         _cts = new CancellationTokenSource();
         _running = true;
         RefreshStatus();
@@ -365,7 +393,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         _timer.Stop();
         _cts?.Cancel();
-        try { SettingsStore.Save(Settings); } catch { }
+        SaveSettingsIfChanged();
         _conn.Dispose();
     }
 }

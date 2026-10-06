@@ -86,6 +86,7 @@ public sealed class SendScheduler
         _log.Info($"Start sending (batch limit {BatchLimit}, buffer estimate {BufferEstimate})");
 
         PrintRow? row = null;
+        int consecutiveNaks = 0;
         try
         {
             while (true)
@@ -110,7 +111,7 @@ public sealed class SendScheduler
                     _log.Info("No pending rows left");
                     return;
                 }
-                if (BufferEstimate >= BatchLimit)
+                if (!_settings.Queue.AutoRefill && BufferEstimate >= BatchLimit)
                 {
                     SetState(SchedulerState.WaitingForOperator,
                         $"{BufferEstimate} item(s) were accepted into the printer buffer (limit {BatchLimit}). Continue once the printer has consumed them.");
@@ -151,7 +152,18 @@ public sealed class SendScheduler
                     case DeliveryOutcome.Accepted:
                         row.Set(RowStatus.Accepted, "Accepted by printer (ACK) - not proof of printing");
                         Interlocked.Increment(ref _bufferEstimate);
+                        consecutiveNaks = 0;
                         _log.Info($"Row {row.ExcelRowId} accepted");
+                        break;
+                    case DeliveryOutcome.Rejected when _settings.Queue.AutoRefill
+                                                      && ++consecutiveNaks <= _settings.Queue.AutoRefillMaxConsecutiveNaks:
+                        // NAK = the printer did not take the row (typically buffer full). Safe to offer the same row again.
+                        row.Set(RowStatus.Pending, $"Printer buffer full / NAK ({consecutiveNaks}); waiting to retry");
+                        SetBufferEstimate(0);
+                        if (consecutiveNaks == 1) _log.Info($"Row {row.ExcelRowId}: NAK, waiting for printer buffer space (auto refill)");
+                        SetState(SchedulerState.Running, "Waiting for space in the printer buffer...");
+                        await Task.Delay(Math.Max(100, _settings.Queue.AutoRefillDelayMs), abort).ConfigureAwait(false);
+                        SetState(SchedulerState.Running);
                         break;
                     case DeliveryOutcome.Rejected:
                         row.Set(RowStatus.Rejected, result.Message);
