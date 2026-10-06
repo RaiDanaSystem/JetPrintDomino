@@ -19,7 +19,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly IDialogService _dialogs;
     private readonly AppLogger _logger;
     private readonly PrinterConnectionManager _conn;
-    private readonly SynchronizationContext _ui;
+    private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _timer;
 
     private ExcelTable? _table;
@@ -42,14 +42,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public MainViewModel(IDialogService dialogs)
     {
         _dialogs = dialogs;
-        _ui = SynchronizationContext.Current ?? new SynchronizationContext();
+        _dispatcher = Dispatcher.CurrentDispatcher;
         Settings = SettingsStore.Load();
 
         _logger = new AppLogger(System.IO.Path.Combine(SettingsStore.DefaultDirectory, "logs"));
-        _logger.EntryLogged += e => _ui.Post(_ => AddLog(e), null);
+        _logger.EntryLogged += e => Post(() => AddLog(e));
 
         _conn = new PrinterConnectionManager(Settings, null, _logger);
-        _conn.StateChanged += _ => _ui.Post(_ => RefreshStatus(), null);
+        _conn.StateChanged += _ => Post(RefreshStatus);
 
         BrowseCommand = new RelayCommand(Browse, () => !_running);
         LoadCommand = new RelayCommand(() => LoadExcel(ExcelPath), () => !_running && ExcelPath.Length > 0);
@@ -75,6 +75,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _excelPath = Settings.Excel.LastFile;
         RefreshStatus();
         _logger.Info("Application started");
+    }
+
+    private void Post(Action a)
+    {
+        if (_dispatcher.CheckAccess()) a();
+        else _dispatcher.BeginInvoke(a);
     }
 
     public AppSettings Settings { get; }
@@ -229,7 +235,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         _queue = PrintQueue.FromExcel(_table, mapping, protocol);
         _scheduler = new SendScheduler(_queue, _conn, Settings, _logger);
-        _scheduler.StateChanged += (_, _) => _ui.Post(_ => RefreshStatus(), null);
+        _scheduler.StateChanged += (_, _) => Post(RefreshStatus);
         Rows = _queue.Rows;
 
         var invalid = _queue.Rows.Count(r => r.Status == RowStatus.Failed);
