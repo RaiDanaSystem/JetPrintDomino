@@ -158,9 +158,9 @@ public sealed class SendScheduler
                     case DeliveryOutcome.Rejected when _settings.Queue.AutoRefill
                                                       && ++consecutiveNaks <= _settings.Queue.AutoRefillMaxConsecutiveNaks:
                         // NAK = the printer did not take the row (typically buffer full). Safe to offer the same row again.
-                        row.Set(RowStatus.Pending, $"Printer buffer full / NAK ({consecutiveNaks}); waiting to retry");
+                        row.Set(RowStatus.Pending, $"NAK ({EdcProtocol.ToHex(result.Response)}) - printer buffer full? waiting to retry ({consecutiveNaks})");
                         SetBufferEstimate(0);
-                        if (consecutiveNaks == 1) _log.Info($"Row {row.ExcelRowId}: NAK, waiting for printer buffer space (auto refill)");
+                        if (consecutiveNaks == 1) _log.Info($"Row {row.ExcelRowId}: NAK {EdcProtocol.ToHex(result.Response)}, waiting for printer buffer space (auto refill)");
                         SetState(SchedulerState.Running, "Waiting for space in the printer buffer...");
                         await Task.Delay(Math.Max(100, _settings.Queue.AutoRefillDelayMs), abort).ConfigureAwait(false);
                         SetState(SchedulerState.Running);

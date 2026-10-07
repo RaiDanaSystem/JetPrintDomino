@@ -123,6 +123,18 @@ public class ProtocolTests
         Assert.Equal(expected, P().ParseAck(bytes).Kind);
     }
 
+    [Theory]
+    [InlineData(new byte[] { 0x41, 0x43, 0x4B }, AckKind.Ack)]                   // ack type "Default": letters ACK
+    [InlineData(new byte[] { 0x06, 0x30, 0x30, 0x30 }, AckKind.Ack)]             // fixed-length ACK
+    [InlineData(new byte[] { 0x15, 0x30, 0x30, 0x31 }, AckKind.Nak)]             // 15 A B C
+    [InlineData(new byte[] { 0x4E, 0x41, 0x4B }, AckKind.Nak)]                   // letters NAK
+    [InlineData(new byte[] { 0x15, 0x30, 0x30, 0x31, 0x32 }, AckKind.Unexpected)]
+    [InlineData(new byte[] { 0x06, 0x41 }, AckKind.Unexpected)]
+    public void Ack_parsing_documented_reply_forms(byte[] bytes, AckKind expected)
+    {
+        Assert.Equal(expected, P().ParseAck(bytes).Kind);
+    }
+
     [Fact]
     public void Ack_byte_is_configurable()
     {
